@@ -1,0 +1,13 @@
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.ipa
+*.dSYM
+*.mobileprovision
+*.p12
+*.p8
+AuthKey_*.p8
+ExportOptions.plist
+local.env
