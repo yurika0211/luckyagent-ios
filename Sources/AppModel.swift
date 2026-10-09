@@ -43,6 +43,7 @@ final class AppModel: ObservableObject {
 
     @Published var healthText: String = "还没探测"
     @Published var busy = false
+    @Published var outbound: OutboundQueue = OutboundQueue()
 
     private let store: SettingsStore
     private var api: APIClient
@@ -135,6 +136,7 @@ final class AppModel: ObservableObject {
                 settings.sessionId = ""
                 lines = []
             }
+            outbound.removeSession(session.id)
             await refreshSessions()
         } catch { banner = error.localizedDescription }
     }
@@ -163,18 +165,54 @@ final class AppModel: ObservableObject {
             banner = "还没连上。先去 Settings 填地址。"
             return
         }
-        lines.append(ChatLine(kind: .user, text: text.isEmpty ? "（附件）" : text))
-        draft = ""
+        let sessionId = settings.sessionId
         let attachments = pendingAttachments
+        let preview = String((text.isEmpty ? "（附件）" : text).prefix(120))
+        lines.append(ChatLine(kind: .user, text: text.isEmpty ? "（附件）" : text))
+        outbound.enqueue(OutboundItem(
+            id: "outbound-\(UUID().uuidString)",
+            sessionId: sessionId,
+            preview: preview,
+            message: text,
+            attachments: attachments,
+            requestId: nil,
+            status: .queued,
+            error: nil
+        ))
+        draft = ""
         pendingAttachments = []
-        assistantLineId = nil
-        reasoningLineId = nil
-        if socket?.sendChat(message: text, attachments: attachments) == nil {
-            banner = "发送失败，连接不在。"
-        }
+        dispatchOutbound()
     }
 
-    func stop() { socket?.cancel() }
+    func retryOutbound(_ id: String) {
+        outbound.retry(id: id)
+        dispatchOutbound()
+    }
+
+    func dropOutbound(_ id: String) {
+        outbound.remove(id: id)
+    }
+
+    /// The runtime takes one turn per session. Send the next queued message only
+    /// when nothing for this session is already in flight.
+    private func dispatchOutbound() {
+        let sessionId = settings.sessionId
+        guard let item = outbound.nextSendable(sessionId: sessionId) else { return }
+        outbound.markSending(id: item.id)
+        assistantLineId = nil
+        reasoningLineId = nil
+        guard let requestId = socket?.sendChat(message: item.message, attachments: item.attachments) else {
+            outbound.markFailed(id: item.id, error: "发送失败，连接不在。")
+            banner = "发送失败，连接不在。"
+            return
+        }
+        outbound.markSent(id: item.id, requestId: requestId)
+    }
+
+    func stop() {
+        socket?.cancel()
+        outbound.dropActive(sessionId: settings.sessionId)
+    }
 
     func resolve(approval: PendingApproval, decision: String, input: String) {
         socket?.sendApproval(
@@ -335,14 +373,35 @@ final class AppModel: ObservableObject {
             if let final, !final.isEmpty, lines.last?.text != final {
                 lines.append(ChatLine(kind: .assistant, text: final))
             }
+            finishOutboundTurn(sessionId: env.sessionId)
         case "error":
             lines.append(ChatLine(kind: .error, text: env.error ?? env.data?.pretty ?? "出错了"))
+            failOutboundTurn(sessionId: env.sessionId, error: env.error ?? "出错了")
         case "cancel", "cancelled":
             lines.append(ChatLine(kind: .system, text: "已停止"))
             assistantLineId = nil
+            outbound.dropActive(sessionId: env.sessionId ?? settings.sessionId)
         default:
             break
         }
+    }
+
+    /// A turn ended cleanly. Drop the in-flight item, then send the next queued one.
+    private func finishOutboundTurn(sessionId: String?) {
+        let session = sessionId ?? settings.sessionId
+        if let sending = outbound.visible(sessionId: session).first(where: { $0.status == .sending }) {
+            outbound.remove(id: sending.id)
+        }
+        if session == settings.sessionId { dispatchOutbound() }
+    }
+
+    /// The in-flight item failed. Keep it for retry, and let a later queued message go out.
+    private func failOutboundTurn(sessionId: String?, error: String) {
+        let session = sessionId ?? settings.sessionId
+        if let sending = outbound.visible(sessionId: session).first(where: { $0.status == .sending }) {
+            outbound.markFailed(id: sending.id, error: error)
+        }
+        if session == settings.sessionId { dispatchOutbound() }
     }
 
     private func appendStream(kind: ChatLine.Kind, id: inout String?, piece: String) {

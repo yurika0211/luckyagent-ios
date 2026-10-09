@@ -8,7 +8,7 @@ LuckyAgent 的 **iOS 客户端**。手机只当客户端，Agent、模型、记�
 
 | 安卓 | iOS |
 |---|---|
-| Chat | `ChatView`：流式回复、工具卡片、停止、会话、模型切换、压缩、附件 |
+| Chat | `ChatView`：流式回复、工具卡片、停止、会话、模型切换、压缩、附件、发送队列 |
 | Tasks | `TasksView` |
 | Background | `BackgroundView`：autonomy 队列和 worker |
 | Cron | `CronView` |
@@ -62,6 +62,7 @@ open LuckyAgent.xcodeproj
 - 没做应用内录音。附件走相册和文件。
 - Memory graph 只显示节点数和边数，和安卓当前一样，没有力导向图。
 - 公式渲染用纯文本，没有安卓那套 LaTeX 视图。
+- 聊天发送队列已对齐安卓：回复还在跑时，后面的消息排队，一轮结束再发下一条。失败的留着可重试，不挡住后面的。停止会丢掉正在发的和还排着的。
 
 ## 目录
 

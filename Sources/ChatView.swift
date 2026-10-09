@@ -71,6 +71,7 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 6) {
+            outboundStrip
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
@@ -94,12 +95,44 @@ struct ChatView: View {
                     .padding(10)
                     .background(scheme == .dark ? Clover.darkSurface : Clover.surface, in: RoundedRectangle(cornerRadius: 16))
                 Button { model.send() } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.title2).foregroundStyle(Clover.accent)
+                    Image(systemName: sendSymbol).font(.title2).foregroundStyle(Clover.accent)
                 }
                 .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty)
+                .accessibilityLabel(model.socketState == .running ? "排队发送" : "发送")
             }
         }
         .padding(12)
+    }
+
+    @ViewBuilder private var outboundStrip: some View {
+        let items = model.outbound.visible(sessionId: model.activeSessionId)
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(items) { item in
+                    HStack(spacing: 8) {
+                        Image(systemName: item.status == .failed ? "exclamationmark.circle" : "clock")
+                            .foregroundStyle(item.status == .failed ? Clover.error : Clover.warning)
+                        Text(item.status == .sending ? "发送中" : (item.status == .failed ? "失败" : "排队"))
+                            .font(.caption2.weight(.semibold))
+                        Text(item.preview).font(.caption).lineLimit(1)
+                        Spacer(minLength: 4)
+                        if item.status == .failed {
+                            Button("重试") { model.retryOutbound(item.id) }.font(.caption2)
+                        }
+                        if item.status != .sending {
+                            Button { model.dropOutbound(item.id) } label: { Image(systemName: "xmark") }
+                                .font(.caption2)
+                        }
+                    }
+                }
+            }
+            .padding(8)
+            .background(Clover.tool, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private var sendSymbol: String {
+        model.socketState == .running ? "text.line.first.and.arrowtriangle.forward" : "arrow.up.circle.fill"
     }
 
     private var currentTitle: String {
