@@ -31,6 +31,11 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: 扫描电脑端配对二维码，以及在聊天里拍照发送。
         NSMicrophoneUsageDescription: 在聊天里录一段语音发送给 Agent。
         NSPhotoLibraryUsageDescription: 从相册选择图片或文件发送给 Agent。
