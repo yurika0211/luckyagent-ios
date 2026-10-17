@@ -786,8 +786,14 @@ final class AppModel: ObservableObject {
     /// A turn ended cleanly. Drop the in-flight item, then send the next queued one.
     private func finishOutboundTurn(_ env: WsEnvelope) {
         let session = env.sessionId ?? settings.sessionId
-        if let sending = outbound.visible(sessionId: session).first(where: { $0.status == .sending }) {
-            outbound.remove(id: sending.id)
+        let requestId = env.parentId ?? env.runId
+        let delivered = outbound.visible(sessionId: session).first {
+            requestId != nil ? $0.requestId == requestId : $0.status == .sending
+        }
+        if let delivered {
+            // A transport send may fail after the server accepted it. Durable
+            // terminal replay is stronger evidence than that local failure.
+            outbound.remove(id: delivered.id)
         }
         if session == settings.sessionId { dispatchOutbound() }
     }

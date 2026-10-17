@@ -67,6 +67,18 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.socketState, .connected)
     }
 
+    func testDurableCompletionConfirmsAnUncertainTransportSend() throws {
+        let (model, socket) = connectedModel()
+        model.draft = "one"; model.send()
+        let item = try XCTUnwrap(model.outbound.items.first)
+        model.outbound.markFailed(id: item.id, error: "transport disconnected")
+        socket.canSendChat = true
+        model.handle(event("stream_end", parent: "request-1", data: ["full_response": .string("delivered answer")]))
+        XCTAssertTrue(model.outbound.items.isEmpty)
+        XCTAssertEqual(socket.messages, ["one"])
+        XCTAssertEqual(model.lines.last?.text, "delivered answer")
+    }
+
     func testStopRequiresRuntimeAcknowledgementBeforeNextSend() {
         let (model, socket) = connectedModel()
         model.draft = "one"; model.send()
