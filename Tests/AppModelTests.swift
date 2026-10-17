@@ -84,6 +84,7 @@ final class AppModelTests: XCTestCase {
         model.draft = "one"; model.send()
         model.draft = "two"; model.send()
         model.stop()
+        model.stop()
         XCTAssertTrue(model.isStopping)
         XCTAssertEqual(socket.cancelCount, 1)
         XCTAssertTrue(model.outbound.items.isEmpty)
@@ -94,6 +95,23 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(model.isStopping)
         model.send()
         XCTAssertEqual(socket.messages, ["one", "three"])
+    }
+
+    func testNaturalCompletionCannotUnlockStopBeforeCancelAcknowledgement() {
+        let (model, socket) = connectedModel()
+        model.draft = "one"; model.send()
+        model.stop()
+        socket.canSendChat = true
+        model.handle(event("stream_end", parent: "request-1", data: ["full_response": .string("finished before stop")]))
+        model.handle(event("status", parent: "request-1", data: ["state": .string("idle")]))
+        model.draft = "two"; model.send()
+        XCTAssertTrue(model.isStopping)
+        XCTAssertEqual(socket.messages, ["one"])
+        model.handle(event("status", data: ["state": .string("idle"), "message": .string("cancelled")]))
+        XCTAssertFalse(model.isStopping)
+        model.send()
+        XCTAssertEqual(socket.messages, ["one", "two"])
+        XCTAssertEqual(model.outbound.items.first?.status, .sending)
     }
 
     func testToolProgressUpdatesSameStepAndFailureIsPreserved() {

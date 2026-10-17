@@ -59,6 +59,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var hasOlderHistory = false
     @Published private(set) var isUploading = false
     @Published private(set) var isStopping = false
+    @Published private(set) var isCompacting = false
     @Published private(set) var resolvingApprovalId: String?
 
     private let store: SettingsStore
@@ -75,6 +76,7 @@ final class AppModel: ObservableObject {
     private var probeRequest = UUID()
     private var bootstrapped = false
     private var settingsTask: Task<Void, Never>?
+    private var compactRequest = UUID()
     private var sessionSockets: [String: SocketClient] = [:]
     private var chatSnapshots: [String: ChatSnapshot] = [:]
 
@@ -88,6 +90,7 @@ final class AppModel: ObservableObject {
         var offset: Int
         var total: Int
         var hasOlder: Bool
+        var stopping: Bool
     }
 
     init(store: SettingsStore = .shared, api: APIClient? = nil) {
@@ -191,6 +194,8 @@ final class AppModel: ObservableObject {
         assistantLineId = nil
         reasoningLineId = nil
         isStopping = false
+        compactRequest = UUID()
+        isCompacting = false
         statusNote = ""
         socketState = .idle
     }
@@ -263,7 +268,7 @@ final class AppModel: ObservableObject {
         if !activeSessionId.isEmpty {
             chatSnapshots[activeSessionId] = ChatSnapshot(lines: lines, approvals: approvals, draft: draft,
                 attachments: pendingAttachments, assistantId: assistantLineId, reasoningId: reasoningLineId,
-                offset: historyOffset, total: historyTotal, hasOlder: hasOlderHistory)
+                offset: historyOffset, total: historyTotal, hasOlder: hasOlderHistory, stopping: isStopping)
         }
         socket?.disconnect()
         socket = nil
@@ -275,6 +280,7 @@ final class AppModel: ObservableObject {
             lines = snapshot.lines; approvals = snapshot.approvals; draft = snapshot.draft
             pendingAttachments = snapshot.attachments; assistantLineId = snapshot.assistantId; reasoningLineId = snapshot.reasoningId
             historyOffset = snapshot.offset; historyTotal = snapshot.total; hasOlderHistory = snapshot.hasOlder
+            isStopping = snapshot.stopping
             reconnect()
             return
         }
@@ -379,7 +385,7 @@ final class AppModel: ObservableObject {
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pendingAttachments.isEmpty else { return }
-        guard !isUploading, !isLoadingHistory, !isStopping else { return }
+        guard !isUploading, !isLoadingHistory, !isStopping, !isCompacting else { return }
         guard !activeSessionId.isEmpty else { banner = "请先新建或选择会话"; return }
         guard socketState == .connected || socketState == .running else {
             banner = "还没连上。先去 Settings 填地址。"
@@ -416,7 +422,7 @@ final class AppModel: ObservableObject {
     /// The runtime takes one turn per session. Send the next queued message only
     /// when nothing for this session is already in flight.
     private func dispatchOutbound() {
-        guard socketState == .connected, socket?.canSendChat == true, !isStopping else { return }
+        guard socketState == .connected, socket?.canSendChat == true, !isStopping, !isCompacting else { return }
         let sessionId = settings.sessionId
         guard let item = outbound.nextSendable(sessionId: sessionId) else { return }
         outbound.markSending(id: item.id)
@@ -431,6 +437,7 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        guard !isStopping else { return }
         guard socket?.cancel() == true else { banner = "停止失败，连接不在。"; return }
         isStopping = true
         outbound.dropActive(sessionId: settings.sessionId)
@@ -487,15 +494,24 @@ final class AppModel: ObservableObject {
     }
 
     func compactSession() async {
-        guard !settings.sessionId.isEmpty else { return }
+        guard !settings.sessionId.isEmpty, !isCompacting, !isStopping, socket?.canSendChat == true else { return }
+        let request = UUID()
+        compactRequest = request
+        isCompacting = true
+        defer {
+            if compactRequest == request {
+                isCompacting = false
+                dispatchOutbound()
+            }
+        }
         let server = serverID
         let sessionId = activeSessionId
         do {
             let result = try await api.compact(sessionId: sessionId)
-            guard server == serverID, sessionId == activeSessionId else { return }
+            guard request == compactRequest, server == serverID, sessionId == activeSessionId else { return }
             banner = result.display?.message ?? result.summary ?? "已压缩"
             await loadHistory()
-        } catch { if server == serverID, sessionId == activeSessionId { banner = error.localizedDescription } }
+        } catch { if request == compactRequest, server == serverID, sessionId == activeSessionId { banner = error.localizedDescription } }
     }
 
     // MARK: other pages
@@ -727,11 +743,11 @@ final class AppModel: ObservableObject {
             if state == "idle", matchesCurrentTurn(env) {
                 finishStreams()
                 socketState = .connected
-                if isStopping || text == "cancelled" {
+                if text == "cancelled" {
                     isStopping = false
                     outbound.dropActive(sessionId: activeSessionId)
                     lines.append(ChatLine(kind: .system, text: "已停止"))
-                } else {
+                } else if !isStopping {
                     finishOutboundTurn(env)
                 }
             }
@@ -769,7 +785,6 @@ final class AppModel: ObservableObject {
             }
             guard matchesCurrentTurn(env) else { return }
             finishStreams()
-            isStopping = false
             socketState = .connected
             failOutboundTurn(env, error: error)
         case "cancel", "cancelled":

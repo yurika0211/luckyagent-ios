@@ -212,6 +212,21 @@ final class AppModelHistoryTests: XCTestCase {
         socket.disconnect()
     }
 
+    func testSessionRoundTripKeepsPendingStopLocked() async {
+        let (model, api, _) = makeModel()
+        model.socket = HistoryStopSocket()
+        model.socketState = .running
+        model.stop()
+        XCTAssertTrue(model.isStopping)
+        api.settings.apiBase = ""
+        await model.selectSession(RuntimeSession(id: "session-2"))
+        XCTAssertFalse(model.isStopping)
+        await model.selectSession(RuntimeSession(id: "session-1"))
+        XCTAssertTrue(model.isStopping)
+        model.handle(event("status", session: "session-1", data: ["state": .string("idle"), "message": .string("cancelled")]))
+        XCTAssertFalse(model.isStopping)
+    }
+
     private func event(_ type: String, session: String, data: [String: JSONValue]) -> WsEnvelope {
         WsEnvelope(type: type, sessionId: session, data: .object(data))
     }
@@ -223,6 +238,15 @@ final class AppModelHistoryTests: XCTestCase {
     private func drainCallbacks() async {
         await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
     }
+}
+
+@MainActor
+private final class HistoryStopSocket: ChatSocket {
+    var canSendChat: Bool { false }
+    func disconnect() {}
+    func sendChat(message: String, attachments: [MediaAttachment]) -> String? { nil }
+    func cancel() -> Bool { true }
+    func sendApproval(requestId: String, provider: String, decision: String, input: String) -> Bool { false }
 }
 
 private final class HistorySocketConnection: SocketConnection {

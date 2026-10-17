@@ -98,7 +98,7 @@ struct ChatView: View {
                 .accessibilityLabel("刷新历史消息")
             Button { Task { await model.compactSession() } } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
                 .accessibilityLabel("压缩会话")
-                .disabled(model.activeSessionId.isEmpty || model.socketState == .running)
+                .disabled(model.activeSessionId.isEmpty || model.socketState != .connected || model.isCompacting || model.isStopping)
             Button(role: .destructive) { model.stop() } label: { Image(systemName: "stop.fill") }
                 .disabled(model.socketState != .running)
                 .accessibilityLabel("停止当前回复")
@@ -142,7 +142,7 @@ struct ChatView: View {
                 Button { model.send() } label: {
                     Image(systemName: sendSymbol).font(.title2).foregroundStyle(Clover.accent)
                 }
-                .disabled(model.isUploading || model.isLoadingHistory || model.isStopping || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
+                .disabled(model.isUploading || model.isLoadingHistory || model.isStopping || model.isCompacting || (model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty))
                 .accessibilityLabel(model.socketState == .running ? "排队发送" : "发送")
             }
         }
