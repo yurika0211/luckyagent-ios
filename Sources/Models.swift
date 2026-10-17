@@ -12,6 +12,14 @@ struct SoulInfo: Codable, Equatable {
 struct SessionsResponse: Codable {
     var sessions: [RuntimeSession] = []
     var count: Int?
+    var total: Int?
+    var limit: Int?
+    var offset: Int?
+    var hasMore: Bool?
+    enum CodingKeys: String, CodingKey {
+        case sessions, count, total, limit, offset
+        case hasMore = "has_more"
+    }
 }
 
 struct RuntimeSession: Codable, Identifiable, Equatable {
@@ -153,7 +161,7 @@ struct TokenUsage: Codable, Equatable {
 }
 
 struct MediaAttachment: Codable, Identifiable, Equatable {
-    var id: String { fileId ?? fileUrl ?? fileName ?? UUID().uuidString }
+    var id: String { fileId ?? fileUrl ?? filePath ?? fileName ?? type }
     var type: String = "document"
     var fileId: String?
     var fileUrl: String?
@@ -207,6 +215,35 @@ struct SwitchModelRequest: Codable {
 struct MemoryStats: Codable {
     var count: Int?
     var tiers: [String: Int]?
+
+    init(count: Int? = nil, tiers: [String: Int]? = nil) {
+        self.count = count
+        self.tiers = tiers
+    }
+
+    enum CodingKeys: String, CodingKey { case count, tiers, stats, total, shortTerm = "short_term", mediumTerm = "medium_term", longTerm = "long_term" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tiers = try c.decodeIfPresent([String: Int].self, forKey: .tiers)
+            ?? c.decodeIfPresent([String: Int].self, forKey: .stats)
+        if tiers == nil, c.contains(.shortTerm) || c.contains(.mediumTerm) || c.contains(.longTerm) {
+            tiers = [
+                "short": try c.decodeIfPresent(Int.self, forKey: .shortTerm) ?? 0,
+                "medium": try c.decodeIfPresent(Int.self, forKey: .mediumTerm) ?? 0,
+                "long": try c.decodeIfPresent(Int.self, forKey: .longTerm) ?? 0
+            ]
+        }
+        count = try c.decodeIfPresent(Int.self, forKey: .count)
+            ?? c.decodeIfPresent(Int.self, forKey: .total)
+            ?? tiers.map { $0.values.reduce(0, +) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(count, forKey: .count)
+        try c.encodeIfPresent(tiers, forKey: .tiers)
+    }
 }
 
 struct MemoryEntry: Codable, Identifiable, Equatable {
@@ -345,7 +382,8 @@ struct TaskEvent: Codable, Identifiable {
     var message: String?
     var timestamp: String?
     enum CodingKeys: String, CodingKey {
-        case id, type, message, timestamp
+        case id, type, message
+        case timestamp = "time"
         case taskId = "task_id"
     }
 }
@@ -415,12 +453,20 @@ struct PendingApproval: Codable, Identifiable, Equatable {
     var prompt: String?
     var kind: String?
     var sessionId: String?
+    var options: [ApprovalOption] = []
+    var secure: Bool = false
     enum CodingKeys: String, CodingKey {
-        case id, title, prompt, kind, provider
+        case id, title, prompt, kind, provider, options, secure
         case requestId = "request_id"
         case sessionId = "session_id"
     }
     var stableId: String { requestId ?? id }
+}
+
+struct ApprovalOption: Codable, Identifiable, Equatable {
+    var id: String
+    var label: String
+    var kind: String?
 }
 
 struct ApprovalsResponse: Codable {
@@ -445,12 +491,16 @@ struct WsEnvelope: Codable {
     var id: String?
     var eventId: String?
     var sessionId: String?
+    var parentId: String?
+    var runId: String?
     var error: String?
     var data: JSONValue?
     enum CodingKeys: String, CodingKey {
         case type, id, error, data
         case eventId = "event_id"
         case sessionId = "session_id"
+        case parentId = "parent_id"
+        case runId = "run_id"
     }
 }
 
@@ -469,8 +519,9 @@ struct ChatOutboundData: Codable {
     var message: String
     var maxIterations: Int = 8
     var attachments: [MediaAttachment] = []
+    var stream: Bool = true
     enum CodingKeys: String, CodingKey {
-        case message, attachments
+        case message, attachments, stream
         case maxIterations = "max_iterations"
     }
 }
@@ -560,7 +611,7 @@ enum JSONValue: Codable, Equatable {
     var pretty: String {
         switch self {
         case .string(let v): return v
-        case .number(let v): return v.rounded() == v ? String(Int(v)) : String(v)
+        case .number(let v): return v.rounded() == v ? String(format: "%.0f", v) : String(v)
         case .bool(let v): return v ? "true" : "false"
         case .null: return ""
         case .object, .array:
@@ -579,6 +630,8 @@ struct ChatLine: Identifiable, Equatable {
     var text: String
     var toolName: String?
     var toolState: String?
+    var toolCallId: String?
+    var attachments: [MediaAttachment] = []
     var streaming: Bool = false
     var createdAt: Date = Date()
 }
@@ -658,9 +711,255 @@ enum PairingQR {
         guard parsed.v == 1 else { return nil }
         let url = parsed.url.trimmingCharacters(in: .whitespacesAndNewlines)
         let token = parsed.token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard url.hasPrefix("http://") || url.hasPrefix("https://"), !token.isEmpty else { return nil }
+        guard let apiBase = BackendURL.normalize(url), !token.isEmpty else { return nil }
         let label = parsed.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return PairingPayload(apiBase: String(url.dropLast(url.hasSuffix("/") ? 1 : 0)), apiKey: token, name: label.isEmpty ? "LuckyAgent" : label)
+        return PairingPayload(apiBase: apiBase, apiKey: token, name: label.isEmpty ? "LuckyAgent" : label)
     }
 }
 
+enum BackendURL {
+    /// A base URL may include a reverse-proxy path, but never credentials or a query.
+    static func normalize(_ raw: String) -> String? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              var c = URLComponents(string: text),
+              let scheme = c.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              let host = c.host, !host.isEmpty, host.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              c.user == nil, c.password == nil, c.query == nil, c.fragment == nil,
+              c.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        c.scheme = scheme
+        while c.path.hasSuffix("/") { c.path.removeLast() }
+        return c.url?.absoluteString
+    }
+}
+
+
+// Explicit defaults are needed for Go omitempty fields and nil slices (JSON null).
+// Declaring these in extensions preserves the existing memberwise initializers.
+
+extension SessionsResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = try c.decodeIfPresent([RuntimeSession].self, forKey: .sessions) ?? []
+        count = try c.decodeIfPresent(Int.self, forKey: .count)
+        total = try c.decodeIfPresent(Int.self, forKey: .total)
+        limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        offset = try c.decodeIfPresent(Int.self, forKey: .offset)
+        hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
+    }
+}
+
+extension RuntimeSession {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        project = try c.decodeIfPresent(String.self, forKey: .project)
+        messageCount = try c.decodeIfPresent(Int.self, forKey: .messageCount)
+        byteSize = try c.decodeIfPresent(Int64.self, forKey: .byteSize)
+        format = try c.decodeIfPresent(String.self, forKey: .format)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
+}
+
+extension SessionHistory {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        project = try c.decodeIfPresent(String.self, forKey: .project)
+        messageCount = try c.decodeIfPresent(Int.self, forKey: .messageCount)
+        format = try c.decodeIfPresent(String.self, forKey: .format)
+        byteSize = try c.decodeIfPresent(Int64.self, forKey: .byteSize)
+        contentTruncated = try c.decodeIfPresent(Bool.self, forKey: .contentTruncated)
+        messages = try c.decodeIfPresent([ProviderMessage].self, forKey: .messages) ?? []
+        limit = try c.decodeIfPresent(Int.self, forKey: .limit)
+        offset = try c.decodeIfPresent(Int.self, forKey: .offset)
+        returned = try c.decodeIfPresent(Int.self, forKey: .returned)
+        hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore)
+    }
+}
+
+extension ProviderMessage {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        content = try c.decodeIfPresent(String.self, forKey: .content)
+        reasoningContent = try c.decodeIfPresent(String.self, forKey: .reasoningContent)
+        contentParts = try c.decodeIfPresent([ProviderContentPart].self, forKey: .contentParts) ?? []
+        attachments = try c.decodeIfPresent([MediaAttachment].self, forKey: .attachments) ?? []
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        toolCallId = try c.decodeIfPresent(String.self, forKey: .toolCallId)
+        toolCalls = try c.decodeIfPresent([HistoryToolCall].self, forKey: .toolCalls) ?? []
+        usage = try c.decodeIfPresent(TokenUsage.self, forKey: .usage)
+    }
+}
+
+extension UploadResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        attachments = try c.decodeIfPresent([MediaAttachment].self, forKey: .attachments) ?? []
+    }
+}
+
+extension ModelsResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        models = try c.decodeIfPresent([ModelRef].self, forKey: .models) ?? []
+        count = try c.decodeIfPresent(Int.self, forKey: .count)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
+extension MemoryGraphResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nodes = try c.decodeIfPresent([MemoryGraphNode].self, forKey: .nodes) ?? []
+        edges = try c.decodeIfPresent([MemoryGraphEdge].self, forKey: .edges) ?? []
+    }
+}
+
+extension MemoryGraphEdge {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        target = try c.decodeIfPresent(String.self, forKey: .target)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        id = (source ?? "") + "→" + (target ?? "")
+    }
+}
+
+extension GatewayStatus {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        platform = try c.decodeIfPresent(String.self, forKey: .platform)
+        running = try c.decodeIfPresent(Bool.self, forKey: .running) ?? false
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        id = name
+    }
+}
+
+extension SkillsResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        skills = try c.decodeIfPresent([SkillInfo].self, forKey: .skills) ?? []
+        count = try c.decodeIfPresent(Int.self, forKey: .count)
+    }
+}
+
+extension TaskListResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tasks = try c.decodeIfPresent([TaskRecord].self, forKey: .tasks) ?? []
+    }
+}
+
+extension TaskTreeResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        task = try c.decodeIfPresent(TaskRecord.self, forKey: .task)
+        children = try c.decodeIfPresent([TaskTreeResponse].self, forKey: .children) ?? []
+    }
+}
+
+extension TaskEvent {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decodeIfPresent(String.self, forKey: .type) ?? ""
+        taskId = try c.decodeIfPresent(String.self, forKey: .taskId)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
+        timestamp = try c.decodeIfPresent(String.self, forKey: .timestamp)
+        id = [taskId, timestamp, type, message].compactMap { $0 }.joined(separator: "|")
+    }
+}
+
+extension TaskEventsResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        taskId = try c.decodeIfPresent(String.self, forKey: .taskId)
+        events = try c.decodeIfPresent([TaskEvent].self, forKey: .events) ?? []
+    }
+}
+
+extension AutonomyDashboardResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try c.decodeIfPresent(String.self, forKey: .generatedAt)
+        queue = try c.decodeIfPresent(AutonomyQueueCounts.self, forKey: .queue)
+        pool = try c.decodeIfPresent(AutonomyPoolStats.self, forKey: .pool)
+        workers = try c.decodeIfPresent([AutonomyWorker].self, forKey: .workers) ?? []
+        tasks = try c.decodeIfPresent([AutonomyTaskSummary].self, forKey: .tasks) ?? []
+    }
+}
+
+extension AutonomyTaskSummary {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        priority = try c.decodeIfPresent(String.self, forKey: .priority) ?? ""
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? ""
+        assignedTo = try c.decodeIfPresent(String.self, forKey: .assignedTo)
+    }
+}
+
+extension ApprovalsResponse {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        approvals = try c.decodeIfPresent([PendingApproval].self, forKey: .approvals) ?? []
+    }
+}
+
+extension AppSettings {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        apiBase = try c.decodeIfPresent(String.self, forKey: .apiBase) ?? "http://127.0.0.1:9090"
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        useBearer = try c.decodeIfPresent(Bool.self, forKey: .useBearer) ?? true
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId) ?? ""
+        appearance = try c.decodeIfPresent(String.self, forKey: .appearance) ?? "system"
+        chromeOpacity = try c.decodeIfPresent(Double.self, forKey: .chromeOpacity) ?? 100
+        cardOpacity = try c.decodeIfPresent(Double.self, forKey: .cardOpacity) ?? 100
+    }
+}
+
+extension PairingQrWire {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        v = try c.decodeIfPresent(Int.self, forKey: .v) ?? 0
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        token = try c.decodeIfPresent(String.self, forKey: .token) ?? ""
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt) ?? ""
+        ttlHours = try c.decodeIfPresent(Int.self, forKey: .ttlHours) ?? 0
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+    }
+}
+
+extension PendingApproval {
+    private enum WireAliases: String, CodingKey { case summary, reason, method }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let aliases = try decoder.container(keyedBy: WireAliases.self)
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? requestId ?? UUID().uuidString
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+            ?? aliases.decodeIfPresent(String.self, forKey: .summary)
+        prompt = try c.decodeIfPresent(String.self, forKey: .prompt)
+            ?? aliases.decodeIfPresent(String.self, forKey: .reason)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+            ?? aliases.decodeIfPresent(String.self, forKey: .method)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .sessionId)
+        options = try c.decodeIfPresent([ApprovalOption].self, forKey: .options) ?? []
+        secure = try c.decodeIfPresent(Bool.self, forKey: .secure) ?? false
+    }
+}
