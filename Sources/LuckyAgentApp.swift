@@ -4,6 +4,7 @@ import SwiftUI
 struct LuckyAgentApp: App {
     @StateObject private var model = AppModel()
     @StateObject private var store = SettingsStore.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -13,6 +14,10 @@ struct LuckyAgentApp: App {
                 .tint(Clover.accent)
                 .preferredColorScheme(preferred)
                 .task { await model.bootstrap() }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { model.resumeConnection() }
+                    if phase == .background { model.suspendConnection() }
+                }
         }
     }
 
@@ -37,7 +42,7 @@ struct RootView: View {
                     Sidebar()
                         .frame(width: 280)
                     Divider()
-                    content
+                    NavigationStack { content }
                 }
             } else {
                 NavigationStack {
@@ -101,7 +106,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 Circle().fill(Clover.leaf).frame(width: 28, height: 28)
-                    .overlay(Text("汐").font(.caption).foregroundStyle(Clover.leaf == Clover.leaf ? Color(hex: 0x172018) : .white))
+                    .overlay(Text("汐").font(.caption).foregroundStyle(Color(hex: 0x172018)))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.personaName.isEmpty ? "LuckyAgent" : model.personaName).font(.headline)
                     Text(stateLabel).font(.caption).foregroundStyle(stateColor)
@@ -109,11 +114,16 @@ struct Sidebar: View {
                 Spacer()
             }
             .padding(16)
-            List(selection: $model.destination) {
+            List {
                 ForEach(groups, id: \.0) { group, items in
                     Section(group) {
                         ForEach(items) { dest in
-                            Label(dest.rawValue, systemImage: dest.symbol).tag(dest)
+                            Button { model.destination = dest } label: {
+                                Label(dest.rawValue, systemImage: dest.symbol)
+                                    .foregroundStyle(model.destination == dest ? Clover.accent : .primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .listRowBackground(model.destination == dest ? Clover.accent.opacity(0.12) : .clear)
                         }
                     }
                 }
