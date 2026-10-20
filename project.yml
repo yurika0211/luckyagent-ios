@@ -14,12 +14,18 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGNING_ALLOWED: YES
     CODE_SIGNING_REQUIRED: NO
+packages:
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    exactVersion: 2.4.1
 targets:
   LuckyAgent:
     type: application
     platform: iOS
     sources:
       - path: Sources
+    dependencies:
+      - package: MarkdownUI
     info:
       path: Sources/Info.plist
       properties:

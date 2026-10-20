@@ -218,10 +218,14 @@ struct MessageRow: View {
                 if line.kind == .reasoning {
                     Text("思考").font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(line.text.isEmpty ? "…" : line.text)
-                    .font(line.kind == .tool || line.kind == .reasoning ? .caption : .body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if line.kind.rendersMarkdown {
+                    ChatMarkdownView(text: line.text, compact: line.kind == .reasoning)
+                } else {
+                    Text(line.text.isEmpty ? "…" : line.text)
+                        .font(line.kind == .tool ? .caption : .body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 ForEach(line.attachments) { attachment in
                     Button {
                         Task {
