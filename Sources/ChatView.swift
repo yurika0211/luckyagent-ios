@@ -8,6 +8,7 @@ struct ChatView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var showSessions = false
     @State private var showModels = false
+    @State private var selectedActivity: ActivitySelection?
     @State private var photoItem: PhotosPickerItem?
     @State private var showImporter = false
 
@@ -28,7 +29,9 @@ struct ChatView: View {
                         if model.lines.isEmpty && !model.isLoadingHistory { welcome }
                         ForEach(ChatTimelineSection.group(model.lines)) { section in
                             if section.isActivity {
-                                ActivityRow(lines: section.lines)
+                                ChatActivityGroup(lines: section.lines) {
+                                    selectedActivity = ActivitySelection(id: section.id, sessionID: model.activeSessionId)
+                                }
                             } else if let line = section.lines.first {
                                 MessageRow(line: line)
                             }
@@ -85,6 +88,8 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showSessions) { SessionSheet() }
         .sheet(isPresented: $showModels) { ModelSheet() }
+        .sheet(item: $selectedActivity) { selection in ActivitySheet(selection: selection) }
+        .onChange(of: model.activeSessionId) { _, _ in selectedActivity = nil }
         .task(id: model.models.isEmpty) {
             if model.models.isEmpty { await model.loadModels() }
         }
@@ -292,24 +297,62 @@ struct MessageRow: View {
     }
 }
 
-private struct ActivityRow: View {
-    var lines: [ChatLine]
+private struct ActivitySelection: Identifiable {
+    let id: String
+    let sessionID: String
+}
+
+private struct ActivitySheet: View {
+    let selection: ActivitySelection
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
     @State private var previewURL: URL?
     @State private var downloading = false
 
     var body: some View {
-        ChatActivityGroup(lines: lines, downloading: downloading,
-                          onCopy: { UIPasteboard.general.string = $0.text },
-                          onQuote: { NotificationCenter.default.post(name: .quoteLine, object: $0.text) },
-                          onPreview: { attachment in
-            Task {
-                downloading = true
-                previewURL = await model.previewAttachment(attachment)
-                downloading = false
+        NavigationStack {
+            ScrollView {
+                if let section {
+                    ChatActivityDetails(lines: section.lines, downloading: downloading,
+                                        onCopy: { UIPasteboard.general.string = $0.text },
+                                        onQuote: { line in
+                        NotificationCenter.default.post(name: .quoteLine, object: line.text)
+                        dismiss()
+                    }, onPreview: { attachment in
+                        Task {
+                            downloading = true
+                            previewURL = await model.previewAttachment(attachment)
+                            downloading = false
+                        }
+                    })
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                } else {
+                    ContentUnavailableView("执行记录已更新", systemImage: "arrow.clockwise",
+                                           description: Text("关闭面板后，重新选择要查看的记录。"))
+                }
             }
-        })
-        .quickLookPreview($previewURL)
+            .background(scheme == .dark ? Clover.darkBg : Clover.bg)
+            .navigationTitle(section.map { "思考了 \($0.lines.count) 步" } ?? "思考过程")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("关闭思考过程")
+                }
+            }
+            .quickLookPreview($previewURL)
+        }
+        .tint(scheme == .dark ? Clover.darkAccent : Clover.accent)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    // Resolve the current group on every model update, never snapshot streaming steps on open.
+    private var section: ChatTimelineSection? {
+        guard model.activeSessionId == selection.sessionID else { return nil }
+        return ChatTimelineSection.group(model.lines).first { $0.id == selection.id && $0.isActivity }
     }
 }
 

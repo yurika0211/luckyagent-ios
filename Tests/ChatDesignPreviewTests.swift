@@ -39,6 +39,19 @@ final class ChatDesignPreviewTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testNativeActivityDetailsAtPhoneWidths() throws {
+        for width: CGFloat in [390, 320] {
+            for scheme in [ColorScheme.light, .dark] {
+                try check(ActivityDetailPreview(width: width, scheme: scheme), width: width)
+            }
+        }
+        let paired = HStack(alignment: .top, spacing: 12) {
+            ActivityDetailPreview(width: 390, scheme: .light)
+            ActivityDetailPreview(width: 390, scheme: .dark)
+        }
+        try write(render(paired), name: "chat-activity-preview.png")
+    }
+
     func testNativeChatDesignAtPhoneWidthsAndLargeType() throws {
         for width: CGFloat in [390, 320] {
             for scheme in [ColorScheme.light, .dark] {
@@ -159,5 +172,37 @@ private struct ChatDesignPreview: View {
         ```
         """)
     ]
+}
+
+@MainActor
+private struct ActivityDetailPreview: View {
+    var width: CGFloat
+    var scheme: ColorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("思考详情预览 · 全部为测试文案").font(.caption).foregroundStyle(.secondary)
+            ChatActivityDetails(lines: [
+                ChatLine(id: "reasoning", kind: .reasoning, text: """
+                **测试文案**：这段内容应直接显示，无需再次展开。
+
+                1. 查看当前记录。
+                2. 核对下方工具的执行状态。
+
+                ```swift
+                let preview = true
+                print(preview)
+                ```
+                """, streaming: true),
+                ChatLine(id: "tool-running", kind: .tool, text: "", toolName: "测试工具 · 执行中", toolState: "running"),
+                ChatLine(id: "tool-failed", kind: .tool, text: "测试失败信息", toolName: "测试工具 · 失败", toolState: "failed")
+            ])
+        }
+        .padding(20)
+        .frame(width: width, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(scheme == .dark ? Clover.darkBg : Clover.bg)
+        .environment(\.colorScheme, scheme)
+    }
 }
 #endif

@@ -21,40 +21,56 @@ struct ChatTimelineSection: Identifiable {
 
 struct ChatActivityGroup: View {
     var lines: [ChatLine]
-    var downloading = false
-    var onCopy: (ChatLine) -> Void = { _ in }
-    var onQuote: (ChatLine) -> Void = { _ in }
-    var onPreview: (MediaAttachment) -> Void = { _ in }
-    @State private var expanded = false
+    var onOpen: () -> Void = {}
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(lines) { line in
-                    ChatMessageContent(line: line, downloading: downloading,
-                                       onCopy: { onCopy(line) }, onQuote: { onQuote(line) }, onPreview: onPreview)
-                }
-            }
-            .padding(.top, 8)
-        } label: {
+        Button(action: onOpen) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles").font(.subheadline)
-                Text("思考与执行").font(.subheadline.weight(.medium))
-                Text("\(lines.count) 项").font(.caption).monospacedDigit()
-                Spacer()
+                    .foregroundStyle(running ? (scheme == .dark ? Clover.darkAccent : Clover.accent) : .secondary)
+                Text(running ? "执行中 · \(lines.count) 步" : "思考了 \(lines.count) 步")
+                    .font(.subheadline.weight(.medium))
+                    .monospacedDigit()
+                Spacer(minLength: 4)
                 if failedCount > 0 {
                     Text("\(failedCount) 项失败").font(.caption).foregroundStyle(Clover.error)
-                } else if lines.contains(where: { $0.streaming || $0.toolState == "running" }) {
-                    Text("执行中").font(.caption)
                 }
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
             }
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .foregroundStyle(.secondary)
+        .accessibilityHint("查看思考过程和工具详情")
     }
 
     private var failedCount: Int {
         lines.filter { ["error", "failed"].contains($0.toolState?.lowercased() ?? "") }.count
+    }
+
+    private var running: Bool {
+        lines.contains { $0.streaming || $0.toolState?.lowercased() == "running" }
+    }
+}
+
+/// The detail sheet shares these live rows with the windowless layout checks.
+struct ChatActivityDetails: View {
+    var lines: [ChatLine]
+    var downloading = false
+    var onCopy: (ChatLine) -> Void = { _ in }
+    var onQuote: (ChatLine) -> Void = { _ in }
+    var onPreview: (MediaAttachment) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(lines) { line in
+                ChatMessageContent(line: line, downloading: downloading,
+                                   onCopy: { onCopy(line) }, onQuote: { onQuote(line) }, onPreview: onPreview)
+            }
+        }
     }
 }
 
@@ -93,33 +109,29 @@ struct ChatMessageContent: View {
         case .user, .assistant:
             ChatMarkdownView(text: line.text, expandsHorizontally: line.kind != .user)
                 .fixedSize(horizontal: false, vertical: true)
-        case .reasoning, .tool:
+        case .reasoning:
+            ChatMarkdownView(text: line.text)
+                .fixedSize(horizontal: false, vertical: true)
+        case .tool:
             DisclosureGroup(isExpanded: $detailsExpanded) {
-                Group {
-                    if line.kind == .reasoning {
-                        ChatMarkdownView(text: line.text, compact: true)
-                    } else {
-                        Text(verbatim: line.text.isEmpty ? "等待工具结果…" : line.text)
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(14)
-                .background(scheme == .dark ? Clover.darkSurface : Clover.tool,
-                            in: RoundedRectangle(cornerRadius: 14))
-                .padding(.top, 8)
+                Text(verbatim: line.text.isEmpty ? "等待工具结果…" : line.text)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(scheme == .dark ? Clover.darkSurface : Clover.tool,
+                                in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.top, 8)
             } label: {
                 HStack(spacing: 9) {
-                    Image(systemName: line.kind == .reasoning ? "sparkle" : "wrench.and.screwdriver")
+                    Image(systemName: "wrench.and.screwdriver")
                         .font(.system(size: 15, weight: .medium))
-                    Text(line.kind == .reasoning ? (line.streaming ? "正在思考" : "思考过程") : (line.toolName ?? "工具调用"))
+                    Text(line.toolName ?? "工具调用")
                         .font(.subheadline.weight(.medium))
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    if line.kind == .tool {
-                        Text(toolState).font(.caption)
-                    }
+                    Text(toolState).font(.caption)
+                        .foregroundStyle(["error", "failed"].contains(line.toolState?.lowercased() ?? "") ? Clover.error : .secondary)
                 }
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 9)
