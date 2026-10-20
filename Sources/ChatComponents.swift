@@ -76,9 +76,10 @@ struct ChatMessageContent: View {
                 if !line.attachments.isEmpty { attachments }
                 if line.kind == .assistant && !line.text.isEmpty { actions }
             }
-            .padding(line.kind == .user ? 14 : 0)
+            .padding(.horizontal, line.kind == .user ? 12 : 0)
+            .padding(.vertical, line.kind == .user ? 10 : 0)
             .background(line.kind == .user ? (scheme == .dark ? Clover.darkUser : Clover.user) : .clear,
-                        in: RoundedRectangle(cornerRadius: 22))
+                        in: RoundedRectangle(cornerRadius: 18))
             .contextMenu {
                 Button(action: onCopy) { Label("复制", systemImage: "doc.on.doc") }
                 Button(action: onQuote) { Label("引用", systemImage: "text.quote") }
@@ -219,9 +220,8 @@ struct ChatComposerBar<Leading: View>: View {
             .accessibilityLabel(queued ? "排队发送" : "发送")
             .padding(2)
         }
-        .padding(6)
-        .background(scheme == .dark ? Clover.darkSurface : Clover.surface, in: RoundedRectangle(cornerRadius: 30))
-        .overlay(RoundedRectangle(cornerRadius: 30).stroke(scheme == .dark ? Clover.darkLine : Clover.line.opacity(0.6), lineWidth: 1))
-        .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.035), radius: 16, y: 4)
+        .padding(2)
+        .background(scheme == .dark ? Clover.darkSurface : Clover.surface, in: RoundedRectangle(cornerRadius: 28))
+        .overlay(RoundedRectangle(cornerRadius: 28).stroke((scheme == .dark ? Clover.darkLine : Clover.line).opacity(0.4), lineWidth: 1))
     }
 }

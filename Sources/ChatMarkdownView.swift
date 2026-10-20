@@ -33,7 +33,7 @@ struct ChatMarkdownView: View {
         Theme.gitHub
             .text {
                 FontSize(compact ? 13 : 16)
-                ForegroundColor(.primary)
+                ForegroundColor(scheme == .dark ? Clover.darkText : Clover.text)
                 BackgroundColor(nil)
             }
             .link {

@@ -2,7 +2,7 @@
 
 LuckyAgent 的 **iOS 客户端**。手机只当客户端，Agent、模型、记忆、工具仍跑在电脑的 `lh serve`。
 
-和 `yurika0211/luckyagent-android` 并列，调同一套 HTTP / WebSocket API。功能面对齐安卓端 `v0.1.57`。
+和 `yurika0211/luckyagent-android` 并列，调同一套 HTTP / WebSocket API。最初以安卓端 `v0.1.57` 为参考实现核心功能；本次界面核对使用 `v0.1.64` 的源码，并非完整功能移植，具体差异见 [安卓界面源码对照](docs/ANDROID_UI_REFERENCE.md)。
 
 ## 页面
 
@@ -18,7 +18,7 @@ LuckyAgent 的 **iOS 客户端**。手机只当客户端，Agent、模型、记�
 | Memory | `MemoryView`：recall、tier、graph 数量 |
 | Settings | `SettingsView`：地址、Key、主题、`lh qr` 配对 |
 
-界面参考安卓客户端：浅绿背景 `#f4f5ed`，绿色强调 `#43863b`，白色圆角卡片。iPhone 使用分组抽屉导航，iPad 保留常驻侧栏，均支持浅色与深色外观。
+界面参考安卓客户端源码：浅色背景 `#f9faf4`，绿色强调 `#3f8a37`，白色圆角卡片，配色与紧凑间距沿用安卓定义。iPhone 使用分组抽屉导航，iPad 保留常驻侧栏，均支持浅色与深色外观。
 
 聊天页使用圆角输入栏，连续的思考与工具记录合并为可展开的执行摘要，正文保留复制与引用入口。会话列表按真实项目分组，支持折叠、搜索、置顶、重命名和删除确认；设置页按运行时连接、当前会话、配对、连接诊断和外观分组。
 
