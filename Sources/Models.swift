@@ -637,35 +637,36 @@ struct ChatLine: Identifiable, Equatable {
 }
 
 enum AppDestination: String, CaseIterable, Identifiable {
-    case chat = "Chat"
-    case tasks = "Tasks"
-    case background = "Background"
-    case cron = "Cron"
-    case trace = "Trace"
-    case gateways = "Gateways"
-    case skills = "Skills"
-    case memory = "Memory"
-    case settings = "Settings"
+    case chat = "聊天"
+    case tasks = "任务"
+    case background = "后台"
+    case cron = "定时"
+    case trace = "轨迹"
+    case gateways = "网关"
+    case skills = "技能"
+    case memory = "记忆"
+    case settings = "基础设置"
     var id: String { rawValue }
 
     var group: String {
         switch self {
-        case .chat: return "WORKSPACE"
-        case .settings: return "SYSTEM"
-        default: return "RUNTIME"
+        case .chat: return "工作空间"
+        case .tasks, .background, .cron, .trace: return "运行与自动化"
+        case .skills, .memory, .gateways: return "资源与连接"
+        case .settings: return "设置"
         }
     }
 
     var symbol: String {
         switch self {
-        case .chat: return "bubble.left"
+        case .chat: return "bubble.left.and.bubble.right"
         case .tasks: return "checklist"
-        case .background: return "square.stack.3d.up"
-        case .cron: return "clock"
+        case .background: return "arrow.triangle.2.circlepath"
+        case .cron: return "calendar.badge.clock"
         case .trace: return "point.topleft.down.to.point.bottomright.curvepath"
-        case .gateways: return "point.3.connected.trianglepath.dotted"
-        case .skills: return "puzzlepiece.extension"
-        case .memory: return "brain"
+        case .gateways: return "network"
+        case .skills: return "sparkles"
+        case .memory: return "brain.head.profile"
         case .settings: return "gearshape"
         }
     }

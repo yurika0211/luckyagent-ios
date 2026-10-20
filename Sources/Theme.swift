@@ -1,21 +1,21 @@
 import SwiftUI
 
 enum Clover {
-    static let bg = Color(hex: 0xF8F5EE)
-    static let side = Color(hex: 0xF2EFE8)
-    static let surface = Color(hex: 0xFFFCF7)
-    static let user = Color(hex: 0xE8F0DE)
-    static let line = Color(hex: 0xE5E0D8)
-    static let text = Color(hex: 0x2B2925)
-    static let text2 = Color(hex: 0x77736C)
-    static let text3 = Color(hex: 0x918C84)
-    static let accent = Color(hex: 0x356F42)
-    static let leaf = Color(hex: 0x9DC74B)
+    static let bg = Color(hex: 0xF4F5ED)
+    static let side = Color(hex: 0xEEF2E5)
+    static let surface = Color(hex: 0xFFFFFF)
+    static let user = Color(hex: 0xE6EED8)
+    static let line = Color(hex: 0xDFE5D7)
+    static let text = Color(hex: 0x252B22)
+    static let text2 = Color(hex: 0x727B6B)
+    static let text3 = Color(hex: 0x89917F)
+    static let accent = Color(hex: 0x43863B)
+    static let leaf = Color(hex: 0x99BE53)
     static let error = Color(hex: 0xB42318)
     static let warning = Color(hex: 0xB26A2D)
     static let codeBg = Color(hex: 0x1E2218)
     static let codeFg = Color(hex: 0xE8ECDC)
-    static let tool = Color(hex: 0xF0F2EA)
+    static let tool = Color(hex: 0xEDF2E5)
 
     static let darkBg = Color(hex: 0x171C18)
     static let darkSide = Color(hex: 0x121713)
@@ -54,10 +54,42 @@ private struct CloverCard: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     func body(content: Content) -> some View {
         content
-            .padding(12)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(scheme == .dark ? Clover.darkSurface : Clover.surface)
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(scheme == .dark ? Clover.darkLine : Clover.line, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(scheme == .dark ? Clover.darkLine : Clover.line, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+struct CloverIconButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 19, weight: .medium))
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Circle())
+            .background(configuration.isPressed ? (scheme == .dark ? Clover.darkUser : Clover.user) : .clear, in: Circle())
+            .opacity(enabled ? 1 : 0.35)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+    }
+}
+
+struct CloverActionButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 18)
+            .frame(minHeight: 44)
+            .foregroundStyle(prominent ? .white : (scheme == .dark ? Clover.darkAccent : Clover.accent))
+            .background(prominent ? Clover.accent : (scheme == .dark ? Clover.darkUser : Clover.user), in: Capsule())
+            .opacity(enabled ? (configuration.isPressed ? 0.72 : 1) : 0.4)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
