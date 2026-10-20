@@ -20,6 +20,8 @@ LuckyAgent 的 **iOS 客户端**。手机只当客户端，Agent、模型、记�
 
 主题色跟安卓一致：bg `#f8f5ee`，accent `#356f42`。iPad 宽屏用侧栏，iPhone 用菜单切换。
 
+聊天中的用户消息、Agent 回复和思考内容支持 GitHub Flavored Markdown：标题、粗体、列表、引用、链接、行内代码、代码块和表格。历史消息和流式回复使用同一渲染方式；代码块支持单独复制，长代码和宽表格在消息内横向滚动。整条消息的「复制」「引用」保留原始 Markdown，工具输出与错误信息保留纯文本。
+
 ## 协议
 
 - `GET /api/v1/health/live`、`/soul`、`/models`、`POST /models/switch`
@@ -43,6 +45,8 @@ open LuckyAgent.xcodeproj
 
 模拟器直接 Run。真机签名看 [docs/SIGNING.md](docs/SIGNING.md)。
 
+首次构建会通过 Swift Package Manager 下载 MarkdownUI 2.4.1 及其依赖，版本在 `project.yml` 和 `Package.swift` 中固定。
+
 电脑上先 `lh serve`，听 `0.0.0.0:9090`。App → Settings，API Base 填 `http://<电脑局域网 IP>:9090`。也可以把 `lh qr` 打出来的 JSON 贴进「配对二维码内容」。
 
 Settings 的「保存连接」会应用地址与鉴权，「保存并探测」会再请求健康检查；主题选择立即保存。首次连上且没有会话时会创建会话。iPhone 上的 `127.0.0.1` 指手机本身，应填写电脑的局域网地址，并允许 App 访问本地网络。
@@ -54,7 +58,7 @@ brew install xcodegen
 scripts/verify.sh
 ```
 
-脚本先运行 macOS 核心测试，再生成工程并为 iOS Simulator 构建 App 与 XCTest 测试包。覆盖真实 Go 协议样例、HTTP 请求、WebSocket 重连与重放、聊天队列、批准、服务器切换和历史分页。无需打开 Xcode，也不依赖已安装的模拟器运行时。
+脚本先运行 macOS 测试，再生成工程并为 iOS Simulator 构建 App 与 XCTest 测试包。覆盖真实 Go 协议样例、HTTP 请求、WebSocket 重连与重放、聊天队列、批准、服务器切换、历史分页，以及 Markdown 的深浅色、宽代码/表格和流式更新渲染。无需打开 Xcode，也不依赖已安装的模拟器运行时。Markdown 测试会生成 `build/markdown-preview.png`，供检查渲染效果。
 
 ```bash
 # 仅运行核心测试

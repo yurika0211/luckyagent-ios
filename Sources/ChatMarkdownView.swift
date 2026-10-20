@@ -59,7 +59,8 @@ struct ChatMarkdownView: View {
                     Divider()
                     ScrollView(.horizontal) {
                         configuration.label
-                            .fixedSize(horizontal: true, vertical: false)
+                            // Keep all lines visible while the viewport scrolls horizontally.
+                            .fixedSize(horizontal: true, vertical: true)
                             .markdownTextStyle {
                                 FontFamilyVariant(.monospaced)
                                 FontSize(.em(0.9))
@@ -75,7 +76,7 @@ struct ChatMarkdownView: View {
             .table { configuration in
                 ScrollView(.horizontal) {
                     configuration.label
-                        .fixedSize(horizontal: true, vertical: false)
+                        .fixedSize(horizontal: true, vertical: true)
                         .markdownTableBorderStyle(.init(color: scheme == .dark ? Clover.darkLine : Clover.line))
                         .markdownTableBackgroundStyle(.alternatingRows(.clear, scheme == .dark ? Clover.darkSurface : Clover.tool))
                 }
