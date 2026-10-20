@@ -15,8 +15,8 @@ let package = Package(
             name: "LuckyAgent",
             dependencies: [.product(name: "MarkdownUI", package: "swift-markdown-ui")],
             path: "Sources",
-            exclude: ["ChatView.swift", "LuckyAgentApp.swift", "RuntimeViews.swift", "Info.plist"],
-            sources: ["Models.swift", "APIClient.swift", "OutboundQueue.swift", "SocketClient.swift", "SettingsStore.swift", "AppModel.swift", "RuntimePresentation.swift", "ChatMarkdownView.swift", "Theme.swift"]
+            exclude: ["ChatView.swift", "LuckyAgentApp.swift", "RuntimeViews.swift", "SettingsView.swift", "SessionSheet.swift", "Info.plist"],
+            sources: ["Models.swift", "APIClient.swift", "OutboundQueue.swift", "SocketClient.swift", "SettingsStore.swift", "AppModel.swift", "RuntimePresentation.swift", "ChatMarkdownView.swift", "ChatComponents.swift", "Theme.swift"]
         ),
         .testTarget(name: "LuckyAgentTests", dependencies: ["LuckyAgent"], path: "Tests")
     ]

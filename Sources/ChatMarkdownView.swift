@@ -19,13 +19,14 @@ extension ChatLine.Kind {
 struct ChatMarkdownView: View {
     let text: String
     var compact = false
+    var expandsHorizontally = true
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Markdown(text.isEmpty ? "…" : text)
             .markdownTheme(theme)
             .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: expandsHorizontally ? .infinity : nil, alignment: .leading)
     }
 
     private var theme: Theme {

@@ -80,7 +80,10 @@ struct TasksView: View {
                 }
             }
         }
-        .navigationTitle("Tasks")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("任务")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading || cancelling) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -156,7 +159,10 @@ struct BackgroundView: View {
                 }
             }
         }
-        .navigationTitle("Background")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("后台任务")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -199,7 +205,10 @@ struct CronView: View {
                 }
             }
         }
-        .navigationTitle("Cron")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("定时任务")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -223,7 +232,7 @@ struct TraceView: View {
                 Section("当前会话") { Text(model.activeSessionId).font(.caption.monospaced()).textSelection(.enabled) }
             }
             if model.activeSessionId.isEmpty {
-                ContentUnavailableView("先选择会话", systemImage: "point.3.connected.trianglepath", description: Text("到 Chat 选择会话后查看工具调用轨迹。"))
+                ContentUnavailableView("先选择会话", systemImage: "point.3.connected.trianglepath", description: Text("在聊天页选择会话后查看工具调用轨迹。"))
             } else {
                 RuntimeFeedback(loading: loading, note: model.traceNote, empty: model.traceText.isEmpty,
                                 title: "还没有轨迹", symbol: "point.3.connected.trianglepath",
@@ -253,7 +262,10 @@ struct TraceView: View {
                 Section("轨迹") { rawTrace }
             }
         }
-        .navigationTitle("Trace")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("执行轨迹")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading || model.activeSessionId.isEmpty) } }
         .refreshable { await reload() }
         .task(id: model.activeSessionId) { await reload() }
@@ -297,7 +309,10 @@ struct GatewaysView: View {
                 }
             }
         }
-        .navigationTitle("Gateways")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("网关")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -347,7 +362,10 @@ struct SkillsView: View {
                 }
             }
         }
-        .navigationTitle("Skills")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("技能")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("刷新") { Task { await reload() } }.disabled(loading) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -435,7 +453,10 @@ struct MemoryView: View {
                 }
             }
         }
-        .navigationTitle("Memory")
+        .scrollContentBackground(.hidden)
+        .background { CloverBackground() }
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("记忆")
         .toolbar { ToolbarItem(placement: .primaryAction) { Button("查询") { Task { await reload() } }.disabled(loading) } }
         .refreshable { await reload() }
         .task { await reload() }
@@ -447,112 +468,5 @@ struct MemoryView: View {
         defer { loading = false }
         await model.loadMemory()
         if model.memoryNote.isEmpty { lastQuery = model.memoryQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
-    }
-}
-
-struct SettingsView: View {
-    @EnvironmentObject private var model: AppModel
-    @State private var draft = AppSettings()
-    @State private var revealKey = false
-    @State private var pairingText = ""
-    @State private var settingsNote = ""
-    @State private var invalidSettings = false
-
-    var body: some View {
-        Form {
-            Section("连接") {
-                TextField("API Base", text: $draft.apiBase)
-                    .keyboardType(.URL).textContentType(.URL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                HStack {
-                    Group {
-                        if revealKey { TextField("API Key", text: $draft.apiKey) }
-                        else { SecureField("API Key", text: $draft.apiKey) }
-                    }
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button { revealKey.toggle() } label: { Image(systemName: revealKey ? "eye.slash" : "eye") }
-                        .accessibilityLabel(revealKey ? "隐藏 API Key" : "显示 API Key")
-                }
-                Toggle("使用 Bearer（关闭时使用 X-API-Key）", isOn: $draft.useBearer)
-                TextField("Session ID，可空", text: $draft.sessionId)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().font(.caption.monospaced())
-                Text("填写电脑端 lh serve 的 HTTP 或 HTTPS 地址；真机应使用电脑的局域网地址。")
-                    .font(.caption).foregroundStyle(.secondary)
-                Button("保存连接设置") { _ = save() }.disabled(model.busy)
-                if !settingsNote.isEmpty {
-                    Text(settingsNote).font(.footnote).foregroundStyle(invalidSettings ? Clover.error : Color.secondary)
-                }
-            }
-            Section("外观") {
-                Picker("主题", selection: $draft.appearance) {
-                    Text("跟随系统").tag("system")
-                    Text("浅色").tag("light")
-                    Text("深色").tag("dark")
-                }
-                .onChange(of: draft.appearance) { _, appearance in
-                    var next = model.settings
-                    next.appearance = appearance
-                    model.applySettings(next)
-                }
-            }
-            Section("配对二维码内容") {
-                TextField("粘贴 lh qr 的 JSON", text: $pairingText, axis: .vertical)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().lineLimit(2...4)
-                Button("应用配对文本") { applyPairing() }
-                    .disabled(pairingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.busy)
-                Text("在电脑执行 lh qr，粘贴包含地址和临时 token 的 JSON。配对密钥使用 X-API-Key。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("探测") {
-                LabeledContent("Health", value: model.healthText)
-                Button(model.busy ? "探测中…" : "保存并探测") {
-                    guard save() else { return }
-                    Task { await model.probe() }
-                }
-                .disabled(model.busy)
-                Button("重连 WebSocket") { model.reconnect() }.disabled(model.busy)
-            }
-            Section("关于") {
-                LabeledContent("客户端", value: "luckyagent-ios 0.1.0")
-                Text("手机是客户端，Agent、模型、记忆和工具运行在电脑的 lh serve 上。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle("Settings")
-        .onAppear { draft = model.settings }
-    }
-
-    @discardableResult private func save() -> Bool {
-        guard let base = RuntimePresentation.normalizedAPIBase(draft.apiBase) else {
-            invalidSettings = true
-            settingsNote = "地址无效：请填写完整的 http:// 或 https:// 地址，不要包含账号、查询参数或 #。"
-            return false
-        }
-        draft.apiBase = base
-        draft.apiKey = draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft.sessionId = draft.sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard model.applySettings(draft) else {
-            invalidSettings = true
-            settingsNote = model.banner ?? "连接设置未能保存，请重试。"
-            return false
-        }
-        invalidSettings = false
-        settingsNote = "连接设置已保存。"
-        return true
-    }
-
-    private func applyPairing() {
-        guard let payload = PairingQR.parse(pairingText) else {
-            invalidSettings = true
-            settingsNote = "配对文本无法解析，请粘贴 lh qr 输出的完整 JSON。"
-            return
-        }
-        draft.apiBase = payload.apiBase
-        draft.apiKey = payload.apiKey
-        draft.useBearer = false
-        if save() {
-            pairingText = ""
-            settingsNote = "已保存配对：\(payload.name)"
-        }
     }
 }

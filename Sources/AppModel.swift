@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published var personaName: String = ""
     @Published var sessions: [RuntimeSession] = []
     @Published var sessionQuery: String = ""
+    @Published var sessionsNote: String = ""
     @Published var lines: [ChatLine] = []
     @Published var draft: String = ""
     @Published var pendingAttachments: [MediaAttachment] = []
@@ -72,6 +73,7 @@ final class AppModel: ObservableObject {
     private var historyRequest = UUID()
     private var connectionID = UUID()
     private var serverID = UUID()
+    private var sessionsRequest = UUID()
     private var taskDetailRequest = UUID()
     private var probeRequest = UUID()
     private var bootstrapped = false
@@ -124,6 +126,8 @@ final class AppModel: ObservableObject {
                 busy = false
                 outbound = OutboundQueue()
                 sessions = []
+                sessionsRequest = UUID()
+                sessionsNote = ""
                 models = []
                 personaName = ""
                 tasks = []; selectedTask = nil; taskEvents = []; taskResult = ""
@@ -253,18 +257,33 @@ final class AppModel: ObservableObject {
     func refreshSessions() async {
         let server = serverID
         let query = sessionQuery
+        let request = UUID()
+        sessionsRequest = request
+        sessionsNote = ""
         do {
             let fetched = try await api.listSessions(query: query)
-            guard server == serverID, query == sessionQuery else { return }
+            guard !Task.isCancelled, request == sessionsRequest, server == serverID, query == sessionQuery else { return }
             // The server sorts pinned first, then by the actual timestamp. Keep
             // that order; lexical RFC3339 comparisons break across time zones.
             sessions = fetched
+            sessionsNote = ""
         }
-        catch { if server == serverID, query == sessionQuery { banner = error.localizedDescription } }
+        catch {
+            if !sessionRequestWasCancelled(error), request == sessionsRequest, server == serverID, query == sessionQuery {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
     }
 
     func selectSession(_ session: RuntimeSession) async {
-        guard session.id != settings.sessionId else { return }
+        if session.id == settings.sessionId {
+            guard !sessionsNote.isEmpty else { return }
+            sessionsNote = ""
+            await loadHistory()
+            return
+        }
+        sessionsNote = ""
         if !activeSessionId.isEmpty {
             chatSnapshots[activeSessionId] = ChatSnapshot(lines: lines, approvals: approvals, draft: draft,
                 attachments: pendingAttachments, assistantId: assistantLineId, reasoningId: reasoningLineId,
@@ -292,34 +311,53 @@ final class AppModel: ObservableObject {
 
     func newSession() async {
         let server = serverID
+        sessionsNote = ""
         do {
             let created = try await api.createSession(title: "iOS session")
             guard server == serverID else { return }
             sessions.insert(created, at: 0)
             await selectSession(created)
-        } catch { if server == serverID { banner = error.localizedDescription } }
+        } catch {
+            if !sessionRequestWasCancelled(error), server == serverID {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
     }
 
     func renameSession(_ session: RuntimeSession, title: String) async {
         let server = serverID
+        sessionsNote = ""
         do {
             _ = try await api.patchSession(id: session.id, patch: SessionPatchRequest(title: title))
             guard server == serverID else { return }
             await refreshSessions()
-        } catch { if server == serverID { banner = error.localizedDescription } }
+        } catch {
+            if !sessionRequestWasCancelled(error), server == serverID {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
     }
 
     func togglePin(_ session: RuntimeSession) async {
         let server = serverID
+        sessionsNote = ""
         do {
             _ = try await api.patchSession(id: session.id, patch: SessionPatchRequest(pinned: !session.pinned))
             guard server == serverID else { return }
             await refreshSessions()
-        } catch { if server == serverID { banner = error.localizedDescription } }
+        } catch {
+            if !sessionRequestWasCancelled(error), server == serverID {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
     }
 
     func deleteSession(_ session: RuntimeSession) async {
         let server = serverID
+        sessionsNote = ""
         do {
             try await api.deleteSession(id: session.id)
             guard server == serverID else { return }
@@ -337,7 +375,16 @@ final class AppModel: ObservableObject {
             await refreshSessions()
             guard server == serverID else { return }
             if settings.sessionId.isEmpty, let next = sessions.first { await selectSession(next) }
-        } catch { if server == serverID { banner = error.localizedDescription } }
+        } catch {
+            if !sessionRequestWasCancelled(error), server == serverID {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
+    }
+
+    private func sessionRequestWasCancelled(_ error: Error) -> Bool {
+        Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     func loadHistory() async {
@@ -356,7 +403,12 @@ final class AppModel: ObservableObject {
             hasOlderHistory = history.hasMore ?? (historyOffset < historyTotal)
             assistantLineId = nil
             reasoningLineId = nil
-        } catch { if historyRequest == request, sessionId == activeSessionId { banner = error.localizedDescription } }
+        } catch {
+            if !sessionRequestWasCancelled(error), historyRequest == request, sessionId == activeSessionId {
+                sessionsNote = error.localizedDescription
+                banner = sessionsNote
+            }
+        }
     }
 
     func loadOlder() async {

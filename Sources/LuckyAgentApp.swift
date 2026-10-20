@@ -45,13 +45,19 @@ struct RootView: View {
                     Sidebar()
                         .frame(width: 280)
                     Divider()
-                    NavigationStack { content }
+                    NavigationStack {
+                        content
+                            .toolbarBackground(scheme == .dark ? Clover.darkBg : Clover.bg, for: .navigationBar)
+                            .toolbarBackground(.visible, for: .navigationBar)
+                    }
                 }
             } else {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         NavigationStack {
                             content
+                                .toolbarBackground(scheme == .dark ? Clover.darkBg : Clover.bg, for: .navigationBar)
+                                .toolbarBackground(.visible, for: .navigationBar)
                                 .toolbar {
                                     ToolbarItem(placement: .topBarLeading) {
                                         Button(action: openDrawer) {
@@ -88,6 +94,7 @@ struct RootView: View {
             }
         }
         .background(scheme == .dark ? Clover.darkBg : Clover.bg)
+        .tint(scheme == .dark ? Clover.darkAccent : Clover.accent)
         .overlay(alignment: .top) { banner }
         .onChange(of: size) { _, next in
             if next == .regular { drawerPresented = false }
