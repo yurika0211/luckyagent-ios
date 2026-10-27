@@ -26,4 +26,23 @@ final class PairingQRTests: XCTestCase {
         XCTAssertNil(PairingQR.parse("not a pairing code"))
         XCTAssertNil(PairingQR.parse("   "))
     }
+
+    func testMinimalPayloadDefaultsOptionalMetadata() {
+        let payload = PairingQR.parse(#"{"v":1,"url":"https://host.example/proxy///","token":"key"}"#)
+        XCTAssertEqual(payload?.apiBase, "https://host.example/proxy")
+        XCTAssertEqual(payload?.name, "LuckyAgent")
+    }
+
+    func testRejectsMalformedOrAmbiguousHTTPAddresses() {
+        for url in ["http://", "http:///missing-host", "http://user:pass@host", "http://host?q=1", "http://host/#fragment", "http://bad host", "http://host:99999"] {
+            let raw = "{\"v\":1,\"url\":\"\(url)\",\"token\":\"key\"}"
+            XCTAssertNil(PairingQR.parse(raw), url)
+        }
+    }
+
+    func testAllowsIPv6AndTrimsCopiedWhitespace() {
+        let payload = PairingQR.parse(#"  {"v":1,"url":" http://[::1]:9090/ ","token":" key "}  "#)
+        XCTAssertEqual(payload?.apiBase, "http://[::1]:9090")
+        XCTAssertEqual(payload?.apiKey, "key")
+    }
 }

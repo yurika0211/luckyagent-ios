@@ -45,14 +45,14 @@ struct OutboundQueue: Equatable {
     }
 
     mutating func markSending(id: String) {
-        update(id) { item in
+        update(id: id) { item in
             item.status = .sending
             item.error = nil
         }
     }
 
     mutating func markSent(id: String, requestId: String) {
-        update(id) { item in
+        update(id: id) { item in
             item.status = .sending
             item.requestId = requestId
             item.error = nil
@@ -60,7 +60,7 @@ struct OutboundQueue: Equatable {
     }
 
     mutating func markFailed(id: String, error: String) {
-        update(id) { item in
+        update(id: id) { item in
             item.status = .failed
             item.error = error
         }

@@ -1,0 +1,188 @@
+name: iOS
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Core tests and simulator build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Run tests and build simulator test targets
+        run: scripts/verify.sh
+      - name: Package simulator app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/DerivedData/Build/Products/Debug-iphonesimulator/LuckyAgent.app \
+            build/LuckyAgent-simulator.app.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: LuckyAgent-simulator-${{ github.run_number }}
+          path: build/LuckyAgent-simulator.app.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  signed-release:
+    name: Signed device release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+    steps:
+      - name: Check signing configuration
+        id: signing
+        shell: bash
+        run: |
+          ready=true
+          for name in IOS_CERTIFICATE_P12_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_TEAM_ID IOS_KEYCHAIN_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              ready=false
+            fi
+          done
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "SIGNING_DIRECTORY=$RUNNER_TEMP/luckyagent-signing" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN=$RUNNER_TEMP/luckyagent-signing.keychain-db" >> "$GITHUB_ENV"
+          if [[ "$ready" != true ]]; then
+            echo 'Signing secrets are incomplete. Device signing and release are skipped; simulator validation is available.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          persist-credentials: false
+      - name: Generate Xcode project
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate --spec project.yml
+      - name: Import signing certificate and profile
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$SIGNING_DIRECTORY"
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 -D > "$SIGNING_DIRECTORY/certificate.p12"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$SIGNING_DIRECTORY/profile.mobileprovision"
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+          security import "$SIGNING_DIRECTORY/certificate.p12" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$SIGNING_KEYCHAIN" >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$IOS_KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$SIGNING_KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          security cms -D -i "$SIGNING_DIRECTORY/profile.mobileprovision" > "$SIGNING_DIRECTORY/profile.plist"
+          python3 - <<'PY'
+          import datetime
+          import os
+          import pathlib
+          import plistlib
+          import uuid
+
+          directory = pathlib.Path(os.environ['SIGNING_DIRECTORY'])
+          with (directory / 'profile.plist').open('rb') as handle:
+              profile = plistlib.load(handle)
+          team = os.environ['IOS_TEAM_ID']
+          bundle = 'com.luckyagent.ios'
+          entitlements = profile.get('Entitlements', {})
+          if team not in profile.get('TeamIdentifier', []):
+              raise SystemExit('The provisioning profile belongs to a different team.')
+          if entitlements.get('application-identifier', '').split('.', 1)[-1] != bundle:
+              raise SystemExit('The provisioning profile must match com.luckyagent.ios.')
+          expiration = profile.get('ExpirationDate')
+          if expiration and expiration.replace(tzinfo=datetime.timezone.utc) <= datetime.datetime.now(datetime.timezone.utc):
+              raise SystemExit('The provisioning profile has expired.')
+          if not profile.get('ProvisionedDevices'):
+              raise SystemExit('Use a Development or Ad Hoc provisioning profile with registered devices.')
+          development = bool(entitlements.get('get-task-allow', False))
+          certificate = 'Apple Development' if development else 'Apple Distribution'
+          profile_uuid = str(uuid.UUID(profile['UUID'])).upper()
+          (directory / 'profile-uuid.txt').write_text(profile_uuid)
+          (directory / 'certificate-type.txt').write_text(certificate)
+          options = {
+              'method': 'debugging' if development else 'release-testing',
+              'teamID': team,
+              'signingStyle': 'manual',
+              'signingCertificate': certificate,
+              'provisioningProfiles': {bundle: profile_uuid},
+              'manageAppVersionAndBuildNumber': False,
+          }
+          with (directory / 'ExportOptions.plist').open('wb') as handle:
+              plistlib.dump(options, handle)
+          PY
+          profile_uuid=$(cat "$SIGNING_DIRECTORY/profile-uuid.txt")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$SIGNING_DIRECTORY/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+      - name: Archive and export IPA
+        if: steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          profile_uuid=$(cat "$SIGNING_DIRECTORY/profile-uuid.txt")
+          certificate_type=$(cat "$SIGNING_DIRECTORY/certificate-type.txt")
+          xcodebuild \
+            -project LuckyAgent.xcodeproj \
+            -scheme LuckyAgent \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/LuckyAgent.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$profile_uuid" \
+            CODE_SIGN_IDENTITY="$certificate_type" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $SIGNING_KEYCHAIN" \
+            archive
+          xcodebuild -exportArchive \
+            -archivePath build/LuckyAgent.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist "$SIGNING_DIRECTORY/ExportOptions.plist"
+      - name: Upload signed IPA
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: LuckyAgent-device-${{ github.ref_name }}
+          path: build/export/*.ipa
+          if-no-files-found: error
+      - name: Publish release asset
+        if: steps.signing.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" build/export/*.ipa --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" build/export/*.ipa \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi
+      - name: Clean up signing material
+        if: always() && steps.signing.outputs.ready == 'true'
+        shell: bash
+        run: |
+          security delete-keychain "$SIGNING_KEYCHAIN" >/dev/null 2>&1 || true
+          if [[ -f "$SIGNING_DIRECTORY/profile-uuid.txt" ]]; then
+            profile_uuid=$(cat "$SIGNING_DIRECTORY/profile-uuid.txt")
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          fi
+          rm -rf "$SIGNING_DIRECTORY"

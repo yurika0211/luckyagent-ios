@@ -1,196 +1,358 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import QuickLook
 
 struct ChatView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
     @State private var showSessions = false
     @State private var showModels = false
+    @State private var selectedActivity: ActivitySelection?
     @State private var photoItem: PhotosPickerItem?
     @State private var showImporter = false
 
     var body: some View {
         VStack(spacing: 0) {
-            topBar
+            sessionBar
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        Button("加载更早的消息") { Task { await model.loadOlder() } }
-                            .font(.footnote)
-                            .buttonStyle(.bordered)
-                            .frame(maxWidth: .infinity)
-                        ForEach(model.lines) { line in
-                            MessageRow(line: line).id(line.id)
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        if model.isLoadingHistory { ProgressView("加载消息…").frame(maxWidth: .infinity) }
+                        if model.hasOlderHistory {
+                            Button("加载更早的消息") { Task { await model.loadOlder() } }
+                                .font(.caption)
+                                .buttonStyle(CloverActionButtonStyle())
+                                .frame(maxWidth: .infinity)
+                                .disabled(model.isLoadingHistory || model.socketState == .running)
                         }
-                        ForEach(model.approvals) { approval in
-                            ApprovalCard(approval: approval)
+                        if model.lines.isEmpty && !model.isLoadingHistory { welcome }
+                        ForEach(ChatTimelineSection.group(model.lines)) { section in
+                            if section.isActivity {
+                                ChatActivityGroup(lines: section.lines) {
+                                    selectedActivity = ActivitySelection(id: section.id, sessionID: model.activeSessionId)
+                                }
+                            } else if let line = section.lines.first {
+                                MessageRow(line: line)
+                            }
                         }
+                        ForEach(model.approvals) { approval in ApprovalCard(approval: approval) }
+                        Color.clear.frame(height: 1).id("chat-bottom")
                     }
-                    .padding(12)
+                    .frame(maxWidth: 820)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 20)
+                    .padding(.bottom, 12)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .onChange(of: model.lines.count) { _, _ in
-                    if let last = model.lines.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("chat-bottom", anchor: .bottom) }
+                }
+                .onChange(of: model.lines.last?.text) { _, _ in
+                    if model.lines.last?.streaming == true { proxy.scrollTo("chat-bottom", anchor: .bottom) }
                 }
             }
-            composer
         }
         .background(scheme == .dark ? Clover.darkBg : Clover.bg)
+        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Button { showModels = true } label: {
+                    HStack(spacing: 6) {
+                        Text(model.models.first(where: { $0.current && $0.kind == "chat" })?.label ?? "模型")
+                            .font(.headline).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.primary)
+                }
+                .accessibilityLabel("切换模型")
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { Task { await model.newSession() } } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("新建会话")
+                    .disabled(model.busy || model.isStopping || model.isCompacting)
+                Menu {
+                    Button("会话列表", systemImage: "rectangle.stack") { showSessions = true }
+                    Button("切换模型", systemImage: "cpu") { showModels = true }
+                    Button("刷新消息", systemImage: "arrow.clockwise") { Task { await model.loadHistory() } }
+                        .disabled(model.activeSessionId.isEmpty || model.socketState == .running || model.isLoadingHistory)
+                    Button("压缩会话", systemImage: "arrow.down.right.and.arrow.up.left") { Task { await model.compactSession() } }
+                        .disabled(model.activeSessionId.isEmpty || model.socketState != .connected || model.isCompacting || model.isStopping)
+                    Button("连接设置", systemImage: "gearshape") { model.destination = .settings }
+                } label: { Image(systemName: "ellipsis") }
+                .accessibilityLabel("更多聊天操作")
+            }
+        }
         .sheet(isPresented: $showSessions) { SessionSheet() }
         .sheet(isPresented: $showModels) { ModelSheet() }
+        .sheet(item: $selectedActivity) { selection in ActivitySheet(selection: selection) }
+        .onChange(of: model.activeSessionId) { _, _ in selectedActivity = nil }
+        .task(id: model.models.isEmpty) {
+            if model.models.isEmpty { await model.loadModels() }
+        }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.item]) { result in
-            if case .success(let url) = result { Task { await importFile(url) } }
+            switch result {
+            case .success(let url): Task { await importFile(url) }
+            case .failure(let error): model.banner = error.localizedDescription
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .quoteLine)) { notification in
+            guard let text = notification.object as? String else { return }
+            model.draft += (model.draft.isEmpty ? "" : "\n\n") + text.split(separator: "\n", omittingEmptySubsequences: false).map { "> \($0)" }.joined(separator: "\n") + "\n\n"
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    await model.upload(data: data, name: "photo.jpg", mime: "image/jpeg")
-                }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                    let type = item.supportedContentTypes.first(where: { $0.conforms(to: .image) && $0.preferredFilenameExtension != nil }) ?? .jpeg
+                    await model.upload(data: data, name: "photo.\(type.preferredFilenameExtension ?? "jpg")", mime: type.preferredMIMEType ?? "image/jpeg")
+                } catch { model.banner = "读取照片失败：\(error.localizedDescription)" }
                 photoItem = nil
             }
         }
     }
 
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            Button { showSessions = true } label: { Image(systemName: "sidebar.left") }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(currentTitle).font(.headline).lineLimit(1)
-                Text(model.socketState.rawValue).font(.caption2).foregroundStyle(.secondary)
+    private var sessionBar: some View {
+        HStack(spacing: 10) {
+            Button { showSessions = true } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                    Text(currentTitle).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 40)
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Button { showModels = true } label: { Image(systemName: "cpu") }
-            Button { Task { await model.compactSession() } } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
-            Button(role: .destructive) { model.stop() } label: { Image(systemName: "stop.fill") }
-                .disabled(model.socketState != .running)
+            .buttonStyle(.plain)
+            Spacer(minLength: 8)
+            HStack(spacing: 5) {
+                Circle().fill(stateColor).frame(width: 6, height: 6)
+                Text(stateLabel).font(.caption)
+            }
+            .foregroundStyle(.secondary)
+            .accessibilityElement(children: .combine)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 20)
+    }
+
+    private var welcome: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "leaf.fill")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(scheme == .dark ? Clover.darkAccent : Clover.accent)
+                .frame(width: 80, height: 80)
+                .background(scheme == .dark ? Clover.darkUser : Clover.user, in: RoundedRectangle(cornerRadius: 28))
+            Text("开始一段对话").font(.title2.weight(.semibold))
+            Text("发条消息，让 LuckyAgent 帮你处理。")
+                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if model.activeSessionId.isEmpty {
+                Button("连接运行时") { model.destination = .settings }
+                    .buttonStyle(CloverActionButtonStyle(prominent: true))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 80)
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             outboundStrip
             if !model.pendingAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
+                    HStack(spacing: 8) {
                         ForEach(model.pendingAttachments) { item in
-                            Text(item.fileName ?? item.type)
-                                .font(.caption)
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(Clover.tool, in: Capsule())
+                            HStack(spacing: 8) {
+                                Image(systemName: "paperclip")
+                                Text(item.fileName ?? item.type).lineLimit(1)
+                                Button { model.pendingAttachments.removeAll { $0.id == item.id } } label: { Image(systemName: "xmark.circle.fill") }
+                                    .accessibilityLabel("移除附件 \(item.fileName ?? item.type)")
+                            }
+                            .font(.caption).padding(10)
+                            .background(scheme == .dark ? Clover.darkSurface : Clover.surface, in: Capsule())
                         }
                     }
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                Menu {
-                    PhotosPicker("相册", selection: $photoItem, matching: .images)
-                    Button("文件") { showImporter = true }
-                } label: { Image(systemName: "plus.circle") }
-                TextField("说点什么", text: $model.draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .padding(10)
-                    .background(scheme == .dark ? Clover.darkSurface : Clover.surface, in: RoundedRectangle(cornerRadius: 16))
-                Button { model.send() } label: {
-                    Image(systemName: sendSymbol).font(.title2).foregroundStyle(Clover.accent)
+            if model.socketState == .running || model.isStopping {
+                HStack {
+                    Text(model.isStopping ? "正在停止…" : "正在回复，后续消息将排队")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { model.stop() } label: { Label("停止", systemImage: "stop.fill") }
+                        .font(.caption.weight(.semibold))
+                        .frame(minHeight: 44)
+                        .disabled(model.isStopping)
                 }
-                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingAttachments.isEmpty)
-                .accessibilityLabel(model.socketState == .running ? "排队发送" : "发送")
             }
+            ChatComposerBar(text: $model.draft, canSend: canSend, queued: model.socketState == .running) {
+                Menu {
+                    PhotosPicker("从相册选择", selection: $photoItem, matching: .images)
+                    Button("选择文件", systemImage: "doc") { showImporter = true }
+                } label: { Image(systemName: "plus") }
+                .disabled(model.isUploading)
+                .accessibilityLabel("添加附件")
+            } onSend: { model.send() }
+            if model.isUploading { ProgressView("上传附件…").font(.caption) }
         }
-        .padding(12)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(scheme == .dark ? Clover.darkBg : Clover.bg)
     }
 
     @ViewBuilder private var outboundStrip: some View {
         let items = model.outbound.visible(sessionId: model.activeSessionId)
         if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(items) { item in
                     HStack(spacing: 8) {
                         Image(systemName: item.status == .failed ? "exclamationmark.circle" : "clock")
                             .foregroundStyle(item.status == .failed ? Clover.error : Clover.warning)
-                        Text(item.status == .sending ? "发送中" : (item.status == .failed ? "失败" : "排队"))
-                            .font(.caption2.weight(.semibold))
+                        Text(item.status == .sending ? "发送中" : (item.status == .failed ? "发送失败" : "等待发送"))
+                            .font(.caption.weight(.medium))
                         Text(item.preview).font(.caption).lineLimit(1)
                         Spacer(minLength: 4)
-                        if item.status == .failed {
-                            Button("重试") { model.retryOutbound(item.id) }.font(.caption2)
-                        }
+                        if item.status == .failed { Button("重试") { model.retryOutbound(item.id) }.font(.caption) }
                         if item.status != .sending {
                             Button { model.dropOutbound(item.id) } label: { Image(systemName: "xmark") }
-                                .font(.caption2)
+                                .frame(minWidth: 30, minHeight: 30)
+                                .accessibilityLabel("移除待发送消息")
                         }
                     }
+                    if let error = item.error { Text(error).font(.caption).foregroundStyle(Clover.error) }
                 }
             }
-            .padding(8)
-            .background(Clover.tool, in: RoundedRectangle(cornerRadius: 12))
+            .padding(12)
+            .background(scheme == .dark ? Clover.darkSurface : Clover.tool, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
-    private var sendSymbol: String {
-        model.socketState == .running ? "text.line.first.and.arrowtriangle.forward" : "arrow.up.circle.fill"
+    private var canSend: Bool {
+        !model.isUploading && !model.isLoadingHistory && !model.isStopping && !model.isCompacting
+            && (!model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.pendingAttachments.isEmpty)
     }
 
     private var currentTitle: String {
-        model.sessions.first { $0.id == model.activeSessionId }?.displayTitle ?? (model.activeSessionId.isEmpty ? "未选择会话" : model.activeSessionId)
+        model.sessions.first { $0.id == model.activeSessionId }?.displayTitle
+            ?? (model.activeSessionId.isEmpty ? "选择会话" : "当前会话")
+    }
+
+    private var stateLabel: String {
+        switch model.socketState {
+        case .idle: return "未连接"
+        case .connecting: return "连接中"
+        case .connected: return "已连接"
+        case .running: return "运行中"
+        case .reconnecting: return "重连中"
+        case .closed: return "已断开"
+        case .error: return "连接异常"
+        }
+    }
+
+    private var stateColor: Color {
+        switch model.socketState {
+        case .connected, .running: return scheme == .dark ? Clover.darkAccent : Clover.accent
+        case .connecting, .reconnecting: return Clover.warning
+        default: return .secondary
+        }
     }
 
     private func importFile(_ url: URL) async {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { return }
-        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-        await model.upload(data: data, name: url.lastPathComponent, mime: mime)
+        do {
+            let data = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
+            let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+            await model.upload(data: data, name: url.lastPathComponent, mime: mime)
+        } catch { model.banner = "读取文件失败：\(error.localizedDescription)" }
     }
 }
 
 struct MessageRow: View {
     var line: ChatLine
-    @Environment(\.colorScheme) private var scheme
+    @EnvironmentObject private var model: AppModel
+    @State private var previewURL: URL?
+    @State private var downloading = false
 
     var body: some View {
-        HStack {
-            if line.kind == .user { Spacer(minLength: 48) }
-            VStack(alignment: .leading, spacing: 4) {
-                if line.kind == .tool {
-                    HStack {
-                        Image(systemName: "wrench")
-                        Text(line.toolName ?? "tool").font(.caption.weight(.semibold))
-                        Spacer()
-                        Text(line.toolState ?? "").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                if line.kind == .reasoning {
-                    Text("思考").font(.caption2).foregroundStyle(.secondary)
-                }
-                Text(line.text.isEmpty ? "…" : line.text)
-                    .font(line.kind == .tool || line.kind == .reasoning ? .caption : .body)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        ChatMessageContent(line: line, downloading: downloading,
+                           onCopy: { UIPasteboard.general.string = line.text },
+                           onQuote: { NotificationCenter.default.post(name: .quoteLine, object: line.text) },
+                           onPreview: { attachment in
+            Task {
+                downloading = true
+                previewURL = await model.previewAttachment(attachment)
+                downloading = false
             }
-            .padding(10)
-            .background(background, in: RoundedRectangle(cornerRadius: 14))
-            .contextMenu {
-                Button("复制") { UIPasteboard.general.string = line.text }
-                Button("引用") { NotificationCenter.default.post(name: .quoteLine, object: line.text) }
+        })
+        .quickLookPreview($previewURL)
+    }
+}
+
+private struct ActivitySelection: Identifiable {
+    let id: String
+    let sessionID: String
+}
+
+private struct ActivitySheet: View {
+    let selection: ActivitySelection
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var previewURL: URL?
+    @State private var downloading = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if let section {
+                    ChatActivityDetails(lines: section.lines, downloading: downloading,
+                                        onCopy: { UIPasteboard.general.string = $0.text },
+                                        onQuote: { line in
+                        NotificationCenter.default.post(name: .quoteLine, object: line.text)
+                        dismiss()
+                    }, onPreview: { attachment in
+                        Task {
+                            downloading = true
+                            previewURL = await model.previewAttachment(attachment)
+                            downloading = false
+                        }
+                    })
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                } else {
+                    ContentUnavailableView("执行记录已更新", systemImage: "arrow.clockwise",
+                                           description: Text("关闭面板后，重新选择要查看的记录。"))
+                }
             }
-            if line.kind != .user { Spacer(minLength: 24) }
+            .background(scheme == .dark ? Clover.darkBg : Clover.bg)
+            .navigationTitle(section.map { "思考了 \($0.lines.count) 步" } ?? "思考过程")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                        .accessibilityLabel("关闭思考过程")
+                }
+            }
+            .quickLookPreview($previewURL)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .quoteLine)) { _ in }
+        .tint(scheme == .dark ? Clover.darkAccent : Clover.accent)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
-    private var background: Color {
-        switch line.kind {
-        case .user: return scheme == .dark ? Clover.darkUser : Clover.user
-        case .tool: return Clover.tool
-        case .error: return Clover.error.opacity(0.12)
-        case .reasoning, .status, .system: return .clear
-        case .assistant: return .clear
-        }
+    // Resolve the current group on every model update, never snapshot streaming steps on open.
+    private var section: ChatTimelineSection? {
+        guard model.activeSessionId == selection.sessionID else { return nil }
+        return ChatTimelineSection.group(model.lines).first { $0.id == selection.id && $0.isActivity }
     }
 }
 
@@ -205,63 +367,29 @@ struct ApprovalCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(approval.title ?? "需要确认").font(.headline)
             if let prompt = approval.prompt { Text(prompt).font(.footnote) }
-            TextField("补充说明，可空", text: $input).textFieldStyle(.roundedBorder)
-            HStack {
-                Button("允许") { model.resolve(approval: approval, decision: "allow", input: input) }
-                    .buttonStyle(.borderedProminent)
-                Button("拒绝", role: .destructive) { model.resolve(approval: approval, decision: "deny", input: input) }
+            if approval.secure {
+                SecureField("输入内容", text: $input).textFieldStyle(.roundedBorder)
+            } else {
+                TextField("补充说明，可空", text: $input).textFieldStyle(.roundedBorder)
             }
+            HStack {
+                if approval.kind == "input" || approval.kind == "credential" {
+                    Button("提交") { model.resolve(approval: approval, decision: "submit", input: input) }.buttonStyle(.borderedProminent)
+                        .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("取消", role: .cancel) { model.resolve(approval: approval, decision: "cancel", input: "") }
+                } else if !approval.options.isEmpty {
+                    ForEach(approval.options) { option in
+                        Button(option.label) { model.resolve(approval: approval, decision: option.id, input: input) }.buttonStyle(.bordered)
+                    }
+                } else {
+                    Button("允许") { model.resolve(approval: approval, decision: "allow", input: input) }.buttonStyle(.borderedProminent)
+                    Button("拒绝", role: .destructive) { model.resolve(approval: approval, decision: "deny", input: input) }
+                }
+            }
+            .disabled(model.resolvingApprovalId != nil)
+            if model.resolvingApprovalId == approval.stableId { ProgressView("提交中…") }
         }
         .cloverCard()
-    }
-}
-
-struct SessionSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var renaming: RuntimeSession?
-    @State private var newTitle = ""
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    TextField("搜索会话", text: $model.sessionQuery)
-                        .onSubmit { Task { await model.refreshSessions() } }
-                    Button("新建会话") { Task { await model.newSession(); dismiss() } }
-                }
-                Section("会话") {
-                    ForEach(model.sessions) { session in
-                        Button {
-                            Task { await model.selectSession(session); dismiss() }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    if session.pinned { Image(systemName: "pin.fill").font(.caption2) }
-                                    Text(session.displayTitle).foregroundStyle(.primary)
-                                }
-                                Text(session.updatedAt ?? session.id).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        .swipeActions {
-                            Button("重命名") { renaming = session; newTitle = session.displayTitle }
-                            Button("删除", role: .destructive) { Task { await model.deleteSession(session) } }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("会话")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
-            .alert("重命名", isPresented: .constant(renaming != nil)) {
-                TextField("标题", text: $newTitle)
-                Button("保存") {
-                    if let session = renaming { Task { await model.renameSession(session, title: newTitle) } }
-                    renaming = nil
-                }
-                Button("取消", role: .cancel) { renaming = nil }
-            }
-            .task { await model.refreshSessions() }
-        }
     }
 }
 
@@ -291,7 +419,10 @@ struct ModelSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background { CloverBackground() }
             .navigationTitle("模型")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
             .task { await model.loadModels() }
         }

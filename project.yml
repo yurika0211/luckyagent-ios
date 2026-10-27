@@ -14,12 +14,18 @@ settings:
     CODE_SIGN_STYLE: Automatic
     CODE_SIGNING_ALLOWED: YES
     CODE_SIGNING_REQUIRED: NO
+packages:
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    exactVersion: 2.4.1
 targets:
   LuckyAgent:
     type: application
     platform: iOS
     sources:
       - path: Sources
+    dependencies:
+      - package: MarkdownUI
     info:
       path: Sources/Info.plist
       properties:
@@ -31,9 +37,15 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: 扫描电脑端配对二维码，以及在聊天里拍照发送。
         NSMicrophoneUsageDescription: 在聊天里录一段语音发送给 Agent。
         NSPhotoLibraryUsageDescription: 从相册选择图片或文件发送给 Agent。
+        NSLocalNetworkUsageDescription: 连接局域网中运行 LuckyAgent 的电脑。
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         UIApplicationSceneManifest:

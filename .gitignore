@@ -11,3 +11,6 @@ xcuserdata/
 AuthKey_*.p8
 ExportOptions.plist
 local.env
+.build/
+.swiftpm/
+LuckyAgent.xcodeproj/

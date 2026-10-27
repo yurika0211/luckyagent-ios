@@ -6,7 +6,7 @@
 
 ## 你要准备的四个东西
 
-1. 一张 **Apple Distribution** 证书，导出成 `.p12`，记一个导出密码。
+1. 一张签名证书，导出成 `.p12`，记一个导出密码：Ad Hoc 配合 **Apple Distribution**，Development 配合 **Apple Development**。
 2. 一个 **Ad Hoc** 或 **Development** 描述文件 `.mobileprovision`。Ad Hoc 要先登记 iPhone 的 UDID。
 3. Team ID。developer.apple.com → Membership 里那串 10 位字符。
 4. 描述文件的 UUID。一般不用手填，工作流会从文件里读。
@@ -48,6 +48,8 @@ git push origin v0.1.0
 只有 `v*` tag 才走签名 job。secrets 不齐时，这一步会跳过，不会把构建标红。模拟器包仍然在普通 push 的 artifact 里。
 
 签名成功后，Release 页面会挂一个 `.ipa`。用 Apple Configurator、Xcode → Devices，或以前登记过的 Ad Hoc 安装方式装到那台 iPhone。
+
+工作流会检查 profile 的 Team、Bundle ID、有效期和登记设备，自动选择 Development 或 Ad Hoc 对应的导出方式；无论成功还是失败，最后都会删除临时 Keychain、证书和 profile。签名 job 需要先通过核心测试和模拟器构建。缺少任一签名 secret 时只跳过真机产物，并保留模拟器产物。
 
 ## 没有开发者账号时
 
